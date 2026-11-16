@@ -1,0 +1,11 @@
+# package.json 的 files 字段是发布白名单；这里再兜底排除仓库专用文件
+.git/
+.gitignore
+.github/
+skills/
+test/
+CONTRIBUTING.md
+*.log
+.DS_Store
+node_modules/
+coverage/

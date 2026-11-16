@@ -1,0 +1,68 @@
+# ============================================================
+# content-publisher 推荐 .gitignore（开源版）
+# 直接复制覆盖项目根目录的 .gitignore
+# 注意：已被 git 跟踪的文件加 ignore 不会自动生效，
+#       需 git rm --cached <path> 或重建干净仓库
+# ============================================================
+
+# ---- 依赖 ----
+node_modules/
+.pnp/
+.pnp.js
+
+# ---- 本地 / 私有配置（含密钥，绝不提交）----
+.env
+.env.*
+!.env.example
+*.local
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.kuaifa-images.json
+.content-publisher/
+config.local.json
+
+# ---- 本地测试 / 生成产物（不开源，仅仓库根目录）----
+/local-tests/
+/outputs/
+/output/
+/coverage/
+/.nyc_output/
+*.tsbuildinfo
+
+# ---- 历史遗留 / 一次性脚本 / 旧版残留（仅仓库根目录）----
+# 必须加 / 锚定，否则 lib/ 会误伤 src/lib/
+/cjs/
+/lib/
+
+# ---- 私有工具配置（Claude Code 记忆与本机路径）----
+.claude/
+
+# ---- 第三方 Skill 子项目（许可未确认前不入库）----
+# 若决定以 AGPL-3.0 整仓开源，请删除以下行并保留完整版权声明
+skills/social-card/
+skills/svg-architect/
+skills/cover-gen/
+
+# ---- 编辑器 / 操作系统 ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.bak
+*.backup
+
+# ---- 语言缓存 ----
+__pycache__/
+*.py[cod]
+.cache/
+.pytest_cache/
+
+# ---- 构建产物（将来若引入构建步骤）----
+dist/
+build/
+*.tgz
