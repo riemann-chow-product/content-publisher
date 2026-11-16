@@ -9,6 +9,7 @@
  *   generateIllustration({ description, style, width, height, out })
  *   generateCodeImage({ code, language, filename, out, width })
  *   generateArticleImages({ file, outDir, style })
+ *   generateDiagram({ spec, out, style, width, height, scale })
  */
 'use strict';
 
@@ -16,6 +17,7 @@ const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
 const Logger = require('./logger');
+const { buildDiagramHTML, normalizeSpec } = require('./diagram');
 
 const logger = new Logger();
 
@@ -40,9 +42,15 @@ async function getBrowser() {
   return _browser;
 }
 
-async function renderToFile(html, width, height, outPath) {
+async function renderToFile(html, width, height, outPath, opts = {}) {
   const browser = await getBrowser();
-  const page = await browser.newPage({ viewport: { width, height } });
+  // Archify 风格图表默认 2x 输出：公众号 / CSDN 在手机端缩放后依然锐利。
+  // 旧调用（封面、代码块图）保持 1x，避免破坏既有的微信封面尺寸规格。
+  const scale = opts.scale || 1;
+  const page = await browser.newPage({
+    viewport: { width, height },
+    deviceScaleFactor: scale,
+  });
   await page.setContent(html, { waitUntil: 'networkidle' });
   const dir = path.dirname(outPath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -392,11 +400,93 @@ async function generateCover({ title, subtitle = '', style = 'dark', width = 900
   logger.spinSucceed(`封面图已生成: ${out}`);
 }
 
-async function generateIllustration({ description, style = 'dark', width = 900, height = 500, out = 'illustration.png' }) {
+async function generateIllustration({ description, style = 'dark', width = 1200, height = 675, out = 'illustration.png' }) {
   logger.spin('生成配图...');
-  const html = buildIllustrationHTML({ description, style, width, height });
-  await renderToFile(html, width, height, out);
-  logger.spinSucceed(`配图已生成: ${out}`);
+  // 旧实现把 alt 文本原样写进一张居中卡片 —— 文章里那不是"图"。
+  // 现在至少产出一张有节点、有连线、有图例的概念图。
+  const parts = String(description)
+    .split(/\s*(?:->|=>|→|,|，|\||、)\s*/)
+    .map(x => x.trim()).filter(Boolean);
+  const theme = style === 'light' ? 'light' : 'dark';
+  const spec = parts.length >= 2 ? {
+    title: '', subtitle: '', badge: 'FLOW', layout: 'row', theme,
+    nodes: parts.map((p, i) => ({
+      id: 'n' + i, label: p,
+      kind: i === 0 ? 'client' : (i === parts.length - 1 ? 'db' : 'service'),
+    })),
+    edges: parts.slice(1).map((_, i) => ({ from: 'n' + i, to: 'n' + (i + 1), primary: i === 0 })),
+  } : {
+    title: String(description), subtitle: '', badge: 'CONCEPT', layout: 'row', theme,
+    nodes: [
+      { id: 'b', label: '输入 / 触发', sub: 'Input', kind: 'client' },
+      { id: 'a', label: String(description), kind: 'service' },
+      { id: 'c', label: '输出 / 结果', sub: 'Output', kind: 'db' },
+    ],
+    edges: [
+      { from: 'b', to: 'a', label: '处理' },
+      { from: 'a', to: 'c', label: '产出', primary: true },
+    ],
+  };
+  await generateDiagram({ spec, out, style, width, height, scale: 2 });
+}
+
+/**
+ * 生成 Archify 风格静态图（分层泳道 / 类型化节点 / 标准箭头 / 主路径高亮 / 图例）。
+ * spec 可以是 JSON 对象、JSON 字符串，或 .json 文件路径。
+ *
+ * 渲染器会在浏览器内跑完整校验（布局、文字、箭头距离、画布比例）并自动修复；
+ * 这里强制读取 window.__DIAGRAM_AUDIT__，任何一条规则不通过就抛错，不产出坏图。
+ */
+async function generateDiagram({ spec, out = 'diagram.png', style, width = 1200, height = 675, scale = 2, autoFit = true }) {
+  logger.spin('生成图表...');
+  let raw = spec;
+  if (typeof spec === 'string' && !spec.trim().startsWith('{')) {
+    raw = fs.readFileSync(spec, 'utf-8');
+  }
+  const normalized = normalizeSpec(raw);
+  if (style) normalized.theme = style === 'light' ? 'light' : 'dark';
+
+  let page = null;
+  const renderAt = async (h) => {
+    const browser = await getBrowser();
+    if (page) await page.close().catch(() => {});
+    page = await browser.newPage({ viewport: { width, height: h }, deviceScaleFactor: scale });
+    await page.setContent(buildDiagramHTML(normalized, { width, height: h }), { waitUntil: 'networkidle' });
+    return page.evaluate(() => window.__DIAGRAM_AUDIT__ || null);
+  };
+
+  let finalHeight = height;
+  let audit = await renderAt(finalHeight);
+
+  // 画布高度自适应：横向内容太矮时收紧画布，避免上下大片留白。
+  // 收紧后必须重新校验；若反而校验不过，退回原尺寸。
+  if (autoFit && audit && audit.contentBox && audit.stageBox) {
+    const fixed = height - audit.stageBox.h;
+    const fitted = Math.max(360, Math.min(height, Math.round((fixed + audit.contentBox.height / 0.42) / 10) * 10));
+    if (fitted < height - 12) {
+      const retry = await renderAt(fitted);
+      if (retry && retry.passed) {
+        finalHeight = fitted;
+        audit = retry;
+      } else {
+        audit = await renderAt(height);
+      }
+    }
+  }
+
+  if (audit && !audit.passed) {
+    await page.close().catch(() => {});
+    const failed = Object.entries(audit.checks || {})
+      .filter(([, v]) => !v.ok).map(([k, v]) => `${k}: ${v.detail}`);
+    throw new Error(`图表校验未通过（不产出坏图）:\n  ${failed.join('\n  ')}\n修复记录: ${(audit.repairs || []).join(' | ')}`);
+  }
+
+  const dir = path.dirname(out);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  await page.screenshot({ path: out, type: 'png' });
+  await page.close();
+  logger.spinSucceed(`图表已生成: ${out}`);
+  return { out, height: finalHeight, audit };
 }
 
 async function generateCodeImage({ code, language = 'bash', filename = '', out = 'code.png', width = 780 }) {
@@ -407,15 +497,46 @@ async function generateCodeImage({ code, language = 'bash', filename = '', out =
   return out;
 }
 
-async function generateArticleImages({ file, outDir = '.', style = 'dark' }) {
+async function generateArticleImages({ file, outDir = '.', style = 'dark', keepBlock = false }) {
   const md = fs.readFileSync(file, 'utf-8');
   const baseDir = outDir || path.dirname(file);
+  const theme = style === 'light' ? 'light' : 'dark';
 
-  // 1. 扫描 ![alt](file.png) 引用，找出不存在的图片
+  // 0) 结构化图代码块：```diagram <file.png>\n{...spec...}\n```
+  //    生成 Archify 风格 PNG，并默认把代码块替换成图片引用，文章里只留图片。
+  const diagramPattern = /```diagram\s+([^\s`]+\.png)\s*\n([\s\S]*?)```/g;
+  const diagrams = [];
+  let dm;
+  while ((dm = diagramPattern.exec(md)) !== null) {
+    diagrams.push({ block: dm[0], imgFile: dm[1], specText: dm[2] });
+  }
+  let outMd = md;
+  if (diagrams.length) logger.info(`发现 ${diagrams.length} 个 diagram 图表块，开始生成...`);
+  for (const d of diagrams) {
+    const imgPath = path.resolve(baseDir, d.imgFile);
+    try {
+      const spec = normalizeSpec(d.specText);
+      spec.theme = theme;
+      await generateDiagram({ spec, out: imgPath, width: 1200, height: 675, scale: 2 });
+      if (!keepBlock) {
+        const alt = spec.title || d.imgFile.replace(/\.png$/, '').replace(/[-_]/g, ' ');
+        outMd = outMd.replace(d.block, `![${alt}](${d.imgFile})`);
+      }
+      logger.info(`  ✅ ${d.imgFile} (Archify 风格图表, 2x)`);
+    } catch (err) {
+      logger.warn(`  ⚠️ ${d.imgFile} 图表生成失败: ${err.message}`);
+    }
+  }
+  if (!keepBlock && outMd !== md) {
+    fs.writeFileSync(file, outMd, 'utf-8');
+    logger.info(`已把 diagram 代码块替换为图片引用: ${file}`);
+  }
+
+  // 1) 扫描 ![alt](file.png) 引用，找出不存在的图片
   const imgPattern = /!\[([^\]]*)\]\(([^)]+\.png)\)/g;
   const missing = [];
   let match;
-  while ((match = imgPattern.exec(md)) !== null) {
+  while ((match = imgPattern.exec(outMd)) !== null) {
     const [, alt, imgFile] = match;
     const imgPath = path.resolve(baseDir, imgFile);
     if (!fs.existsSync(imgPath)) {
@@ -430,10 +551,10 @@ async function generateArticleImages({ file, outDir = '.', style = 'dark' }) {
 
   logger.info(`发现 ${missing.length} 张缺失图片，开始生成...`);
 
-  // 2. 扫描 markdown 代码块，为代码块图片生成内容
+  // 2) 扫描 markdown 代码块，为代码块图片生成内容
   const codeBlockPattern = /```(\w*)\n([\s\S]*?)```/g;
   const codeBlocks = [];
-  while ((match = codeBlockPattern.exec(md)) !== null) {
+  while ((match = codeBlockPattern.exec(outMd)) !== null) {
     codeBlocks.push({ language: match[1] || 'text', code: match[2].trimEnd() });
   }
 
@@ -442,7 +563,6 @@ async function generateArticleImages({ file, outDir = '.', style = 'dark' }) {
     const alt = img.alt.toLowerCase();
 
     if (alt.includes('code') || alt.includes('代码') || alt.includes('命令') || alt.includes('脚本') || alt.includes('示例')) {
-      // 代码块图片：按出现顺序匹配
       if (codeIdx < codeBlocks.length) {
         const block = codeBlocks[codeIdx++];
         await generateCodeImage({
@@ -455,18 +575,16 @@ async function generateArticleImages({ file, outDir = '.', style = 'dark' }) {
         logger.info(`  ✅ ${img.file} (代码块)`);
       }
     } else if (alt.includes('cover') || alt.includes('封面')) {
-      // 封面图
       await generateCover({ title: img.alt, style, out: img.path });
     } else {
-      // 通用配图
       await generateIllustration({
         description: img.alt,
         style,
-        width: 900,
-        height: 500,
+        width: 1200,
+        height: 675,
         out: img.path,
       });
-      logger.info(`  ✅ ${img.file} (配图)`);
+      logger.info(`  ✅ ${img.file} (Archify 风格概念图, 2x)`);
     }
   }
 
@@ -478,4 +596,6 @@ module.exports = {
   generateIllustration,
   generateCodeImage,
   generateArticleImages,
+  generateDiagram,
+  buildDiagramHTML,
 };

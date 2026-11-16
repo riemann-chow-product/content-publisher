@@ -7,6 +7,7 @@
  *   content-publisher generate cover <title> --out cover.png
  *   content-publisher generate illustration <description> --out img.png [--width 1200] [--height 630]
  *   content-publisher generate article-images <file.md> --out-dir ./imgs
+ *   content-publisher generate diagram <spec.json|JSON|-> --out fig.png
  */
 'use strict';
 
@@ -59,18 +60,55 @@ cmd
     });
   });
 
+// ── diagram (Archify 风格静态图) ────────────────────────────────
+cmd
+  .command('diagram <spec>')
+  .description('按结构化 JSON spec 生成 Archify 风格静态图表（1200×675, 2x 输出）')
+  .option('-o, --out <path>', '输出文件路径', 'diagram.png')
+  .option('--style <name>', '主题: dark|light', 'dark')
+  .option('--width <n>', '宽度', '1200')
+  .option('--height <n>', '高度', '675')
+  .option('--scale <n>', '设备像素比（2 = 高清）', '2')
+  .option('--no-auto-fit', '关闭画布高度自适应')
+  .option('--audit-json', '打印完整校验报告（JSON）')
+  .option('--stdin', '从标准输入读取 spec（也可把 <spec> 传成 -）')
+  .action(async (specArg, opts) => {
+    const { generateDiagram } = require('../lib/generator');
+    let spec = specArg;
+    if (specArg === '-' || opts.stdin) {
+      spec = fs.readFileSync(0, 'utf-8');
+    }
+    const result = await generateDiagram({
+      spec,
+      out: opts.out,
+      style: opts.style,
+      width: parseInt(opts.width, 10),
+      height: parseInt(opts.height, 10),
+      scale: parseInt(opts.scale, 10),
+      autoFit: opts.autoFit !== false,
+    });
+    if (opts.auditJson) {
+      console.log(JSON.stringify(result.audit, null, 2));
+    } else if (result.audit) {
+      const a = result.audit;
+      console.log(`  校验: ${a.passed ? '通过' : '未通过'} · ${Object.keys(a.checks).length} 项规则 · 自动修复 ${a.repairs.length} 次 · 画布 ${a.stageBox ? Math.round(a.stageBox.h) : '?'}px`);
+    }
+  });
+
 // ── article-images ──────────────────────────────────────────────
 cmd
   .command('article-images <file>')
   .description('扫描 Markdown 文件中的图片占位符，自动生成配图')
   .option('--out-dir <dir>', '输出目录', '.')
   .option('--style <name>', '风格', 'dark')
+  .option('--keep-block', '保留文章里的 diagram 代码块（不替换成图片引用）', false)
   .action(async (file, opts) => {
     const { generateArticleImages } = require('../lib/generator');
     await generateArticleImages({
       file,
       outDir: opts.outDir,
       style: opts.style,
+      keepBlock: opts.keepBlock,
     });
   });
 
