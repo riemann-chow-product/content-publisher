@@ -95,6 +95,28 @@ cmd
     }
   });
 
+// ── diagram-v2 (矢量优先 · 编辑级四类型图表) ──────────────────
+cmd
+  .command('diagram-v2 <spec>')
+  .description('矢量优先生成四类技术图：架构图 / 流程图 / 时序图 / 网络部署图（2x 高清，一次成图无需二次润色）')
+  .option('-o, --out <path>', '输出 PNG 路径', 'diagram.png')
+  .option('--theme <name>', '主题: light|dark', 'light')
+  .option('--scale <n>', '设备像素比（2 = 高清, 3 = 超清）', '2')
+  .option('--svg-only', '只输出 SVG 矢量源文件')
+  .option('--stdin', '从标准输入读取 spec（也可把 <spec> 传成 -）')
+  .action(async (specArg, opts) => {
+    const { renderV2 } = require('../lib/generator');
+    let spec = specArg;
+    if (specArg === '-' || opts.stdin) spec = fs.readFileSync(0, 'utf-8');
+    await renderV2({
+      spec,
+      out: opts.out,
+      theme: opts.theme,
+      scale: parseInt(opts.scale, 10),
+      svgOnly: opts.svgOnly,
+    });
+  });
+
 // ── article-images ──────────────────────────────────────────────
 cmd
   .command('article-images <file>')

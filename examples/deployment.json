@@ -1,0 +1,33 @@
+{
+  "type": "deployment",
+  "title": "GroveMQ 网络部署拓扑",
+  "subtitle": "公网接入 → DMZ → 应用区 → 数据区，逐级收敛信任边界",
+  "badge": "NETWORK DEPLOYMENT",
+  "theme": "light",
+  "footnote": "仅 DMZ 暴露 1883/8083 端口，数据区无公网入口",
+  "zones": [
+    { "id": "internet", "label": "公网 / Internet", "tone": "gray" },
+    { "id": "dmz", "label": "DMZ 隔离区", "tone": "cyan" },
+    { "id": "app", "label": "应用区 / VPC", "tone": "violet" },
+    { "id": "data", "label": "数据区 / 内网", "tone": "green" }
+  ],
+  "nodes": [
+    { "id": "dev", "label": "IoT 设备", "sub": "MQTT over TLS", "kind": "client", "zone": "internet" },
+    { "id": "waf", "label": "WAF / 防火墙", "sub": "1883 · 8083", "kind": "network", "zone": "dmz" },
+    { "id": "lb", "label": "负载均衡 SLB", "sub": "TCP 透传 · 亲和", "kind": "network", "zone": "dmz" },
+    { "id": "broker1", "label": "Broker A", "sub": "AZ-1 · 转发层", "kind": "service", "zone": "app" },
+    { "id": "broker2", "label": "Broker B", "sub": "AZ-2 · 转发层", "kind": "service", "zone": "app" },
+    { "id": "kafka", "label": "Kafka 集群", "sub": "消息持久化", "kind": "queue", "zone": "data" },
+    { "id": "db", "label": "MySQL 主从", "sub": "订阅 / 会话", "kind": "db", "zone": "data" }
+  ],
+  "edges": [
+    { "from": "dev", "to": "waf", "label": "TLS :8883", "primary": true },
+    { "from": "waf", "to": "lb", "label": "过滤后" },
+    { "from": "lb", "to": "broker1", "label": "TCP :1883" },
+    { "from": "lb", "to": "broker2", "label": "TCP :1883" },
+    { "from": "broker1", "to": "kafka", "label": "写入" },
+    { "from": "broker2", "to": "kafka", "label": "写入" },
+    { "from": "broker1", "to": "db", "label": "会话状态", "dashed": true }
+  ],
+  "legend": true
+}

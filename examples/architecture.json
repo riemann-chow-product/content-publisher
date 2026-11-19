@@ -1,0 +1,35 @@
+{
+  "type": "architecture",
+  "title": "GroveMQ 双层负载均衡架构",
+  "subtitle": "接入层只负责连接分发，转发层承担消息投递语义",
+  "badge": "SYSTEM ARCHITECTURE",
+  "theme": "light",
+  "footnote": "负载数据 stale 时自动降级为 fan-out",
+  "groups": [
+    { "id": "edge", "label": "客户端层", "tone": "blue" },
+    { "id": "access", "label": "接入层 / L4", "tone": "cyan" },
+    { "id": "forward", "label": "转发层 / Cluster", "tone": "violet" },
+    { "id": "state", "label": "状态与存储层", "tone": "green" }
+  ],
+  "nodes": [
+    { "id": "c1", "label": "MQTT Publisher", "sub": "设备 / 边缘网关", "kind": "client", "group": "edge" },
+    { "id": "c2", "label": "Subscriber", "sub": "$share 共享订阅", "kind": "client", "group": "edge" },
+    { "id": "lb", "label": "L4 Service", "sub": "ClientIP 亲和\n四层负载均衡", "kind": "network", "group": "access" },
+    { "id": "n1", "label": "Broker N1", "sub": "NodeLoadTable", "kind": "service", "group": "forward" },
+    { "id": "n2", "label": "Broker N2", "sub": "PublishForward", "kind": "service", "group": "forward" },
+    { "id": "q", "label": "消息缓冲", "sub": "Kafka 分区队列", "kind": "queue", "group": "forward" },
+    { "id": "db", "label": "订阅表 / 会话", "sub": "gob 全量复制", "kind": "db", "group": "state" },
+    { "id": "cache", "label": "负载快照", "sub": "Redis 秒级刷新", "kind": "cache", "group": "state" }
+  ],
+  "edges": [
+    { "from": "c1", "to": "lb", "label": "CONNECT", "primary": true },
+    { "from": "c2", "to": "lb", "label": "SUBSCRIBE" },
+    { "from": "lb", "to": "n1", "label": "连接分发" },
+    { "from": "lb", "to": "n2", "label": "连接分发" },
+    { "from": "n1", "to": "q", "label": "写入" },
+    { "from": "n2", "to": "q", "label": "写入" },
+    { "from": "n1", "to": "db", "label": "恰好一次投递", "dashed": true },
+    { "from": "q", "to": "cache", "label": "负载快照" }
+  ],
+  "legend": true
+}

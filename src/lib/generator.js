@@ -26,11 +26,32 @@ let _browser = null;
 let _browserCloseTimer = null;
 const BROWSER_IDLE_MS = 10_000;
 
+function launchOptions() {
+  const opts = { headless: true };
+  // 优先复用系统 Chrome：CJK 字体稳定，且免去下载 Playwright 内核。
+  const candidates = [
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+  ];
+  if (process.platform === 'darwin') {
+    const found = candidates.find(p => fs.existsSync(p));
+    if (found) opts.executablePath = found;
+  }
+  return opts;
+}
+
 async function getBrowser() {
   if (_browser) {
     clearTimeout(_browserCloseTimer);
   } else {
-    _browser = await chromium.launch();
+    try {
+      _browser = await chromium.launch(launchOptions());
+    } catch (e) {
+      // 系统 Chrome 不可用（或版本不匹配）时回退到 Playwright 自带内核
+      const fallback = launchOptions();
+      delete fallback.executablePath;
+      _browser = await chromium.launch(fallback);
+    }
   }
   // 空闲 10s 后自动关闭，避免泄漏
   _browserCloseTimer = setTimeout(async () => {
@@ -489,6 +510,41 @@ async function generateDiagram({ spec, out = 'diagram.png', style, width = 1200,
   return { out, height: finalHeight, audit };
 }
 
+/**
+ * renderV2 — 矢量优先的编辑级图表（新增，保留旧 generateDiagram 不动）。
+ * spec 可传对象 / JSON 字符串 / .json 路径；同时输出 PNG + SVG 源文件。
+ */
+async function renderV2({ spec, out = 'diagram.png', theme = 'light', scale = 2, svgOnly = false }) {
+  const { buildSVG } = require('./diagram-v2');
+  let raw = spec;
+  if (typeof spec === 'string') {
+    raw = spec.trim().startsWith('{') ? JSON.parse(spec) : JSON.parse(fs.readFileSync(spec, 'utf-8'));
+  }
+  if (theme) raw.theme = theme === 'dark' ? 'dark' : 'light';
+  const { svg, width, height, audit } = buildSVG(raw);
+
+  const dir = path.dirname(out);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  const svgPath = out.replace(/\.png$/i, '.svg');
+  fs.writeFileSync(svgPath, svg, 'utf-8');
+
+  if (!svgOnly) {
+    const browser = await getBrowser();
+    const page = await browser.newPage({
+      viewport: { width, height },
+      deviceScaleFactor: scale,
+    });
+    await page.setContent(
+      `<!DOCTYPE html><html><head><meta charset="utf-8"><style>*{margin:0;padding:0}html,body{width:${width}px;height:${height}px;overflow:hidden}</style></head><body>${svg}</body></html>`,
+      { waitUntil: 'networkidle' }
+    );
+    await page.screenshot({ path: out, type: 'png' });
+    await page.close();
+  }
+  logger.spinSucceed(`图表已生成: ${svgOnly ? svgPath : out} (${width}×${height}${svgOnly ? '' : ` @${scale}x`}, 校验${audit.passed ? '通过' : '未通过'})`);
+  return { out: svgOnly ? svgPath : out, svgPath, width, height, audit };
+}
+
 async function generateCodeImage({ code, language = 'bash', filename = '', out = 'code.png', width = 780 }) {
   const html = buildCodeImageHTML(code, language, filename, width);
   const lines = code.split('\n').length;
@@ -597,5 +653,6 @@ module.exports = {
   generateCodeImage,
   generateArticleImages,
   generateDiagram,
+  renderV2,
   buildDiagramHTML,
 };

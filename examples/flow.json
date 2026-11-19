@@ -1,0 +1,25 @@
+{
+  "type": "flow",
+  "title": "一条消息的转发决策路径",
+  "subtitle": "从发布到投递，经过匹配、选点与降级判断",
+  "badge": "PROCESS FLOW",
+  "theme": "light",
+  "footnote": "选中节点不可用时回退到广播 fan-out",
+  "nodes": [
+    { "id": "p", "label": "Publisher", "sub": "发布消息", "kind": "client" },
+    { "id": "match", "label": "Topic 匹配", "sub": "TopicFilter 树", "kind": "service" },
+    { "id": "decision", "label": "有匹配订阅？", "kind": "service", "shape": "decision" },
+    { "id": "select", "label": "节点选点", "sub": "NodeLoadTable", "kind": "network" },
+    { "id": "forward", "label": "PublishForward", "sub": "转发消息", "kind": "service" },
+    { "id": "end", "label": "投递完成", "kind": "db", "shape": "terminal" }
+  ],
+  "edges": [
+    { "from": "p", "to": "match", "label": "PUBLISH", "primary": true },
+    { "from": "match", "to": "decision" },
+    { "from": "decision", "to": "select", "label": "是" },
+    { "from": "select", "to": "forward", "label": "最优节点" },
+    { "from": "forward", "to": "end", "label": "SharedGroups" },
+    { "from": "decision", "to": "end", "label": "否 / fan-out", "dashed": true }
+  ],
+  "legend": true
+}

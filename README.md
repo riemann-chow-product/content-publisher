@@ -337,3 +337,34 @@ Report example (`window.__DIAGRAM_AUDIT__`, also returned by `generateDiagram()`
 Use `--no-auto-fit` to disable canvas height fitting. See `test/diagram.test.js` for
 regression tests (crowded layouts, arrow distances, pixel-level arrow/line rendering,
 and refusal to emit bad images).
+
+---
+
+## Vector-first diagrams (`diagram-v2`, recommended)
+
+The original Archify-style renderer measures CSS in the browser, then shrinks fonts
+and scales the canvas to fit a fixed 1200×675 frame — text ends up small and often
+needs a second AI pass to look publishable. `diagram-v2` replaces that for technical
+figures with a **vector-first** renderer:
+
+- **Four diagram idioms**: `architecture`, `flow`, `sequence`, `deployment` — each with
+  its own visual grammar (swimlanes, decision diamonds, lifelines, trust-zone boundaries).
+- **Crisp at any zoom**: pure SVG output; PNG is rendered at 2×/3× from the same source.
+- **Editorial typography**: 17px node labels, clear hierarchy, no shrink-to-fit.
+- **Content-sized canvas**: height follows content, with collision-aware edge labels
+  that avoid nodes, lane titles, the header and each other.
+- **One pass**: no `image2`-style re-rendering needed; an SVG source file is emitted
+  alongside every PNG for later editing.
+
+```bash
+node bin/cli.js generate diagram-v2 examples/architecture.json --out arch.png --theme light
+node bin/cli.js generate diagram-v2 examples/flow.json --out flow.png --scale 3
+node bin/cli.js generate diagram-v2 - --theme dark --out d.png < spec.json
+```
+
+Spec `type` selects the renderer. Reuse the `groups` / `nodes` / `edges` fields from the
+old format; `sequence` additionally uses `participants` + `messages`, and `deployment`
+uses `zones` + `nodes[].zone`. See `examples/` for all four.
+
+Modules: `src/lib/diagram-v2.js` (spec → SVG, zero deps), `src/lib/generator.js`
+(`renderV2`), `src/commands/generate.js` (`diagram-v2`).

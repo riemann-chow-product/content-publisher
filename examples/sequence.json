@@ -1,0 +1,25 @@
+{
+  "type": "sequence",
+  "title": "共享订阅的消息投递时序",
+  "subtitle": "Client → L4 → Broker → 订阅表，恰好一次投递",
+  "badge": "SEQUENCE DIAGRAM",
+  "theme": "light",
+  "footnote": "Broker 在 fan-out 前先读取共享组快照",
+  "participants": [
+    { "id": "c", "label": "MQTT Client", "sub": "发布端", "kind": "client" },
+    { "id": "lb", "label": "L4 Service", "sub": "接入层", "kind": "network" },
+    { "id": "b", "label": "Broker", "sub": "转发层", "kind": "service" },
+    { "id": "q", "label": "消息队列", "sub": "Kafka", "kind": "queue" },
+    { "id": "db", "label": "订阅表", "sub": "状态层", "kind": "db" }
+  ],
+  "messages": [
+    { "from": "c", "to": "lb", "label": "CONNECT / PUBLISH" },
+    { "from": "lb", "to": "b", "label": "转发连接 (ClientIP 亲和)" },
+    { "from": "b", "to": "db", "label": "读取共享组快照" },
+    { "from": "db", "to": "b", "label": "返回候选节点", "type": "return" },
+    { "from": "b", "to": "q", "label": "写入 PublishForward" },
+    { "from": "q", "to": "b", "label": "消费确认 (ACK)", "type": "return" },
+    { "from": "b", "to": "c", "label": "PUBACK · 恰好一次", "type": "dash" }
+  ],
+  "legend": true
+}

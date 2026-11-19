@@ -27,6 +27,7 @@ config.local.json
 /local-tests/
 /outputs/
 /output/
+/out/
 /coverage/
 /.nyc_output/
 *.tsbuildinfo
