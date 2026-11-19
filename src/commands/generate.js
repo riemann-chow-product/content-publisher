@@ -23,20 +23,22 @@ const cmd = new Command('generate')
 // ── cover ────────────────────────────────────────────────────────
 cmd
   .command('cover <title>')
-  .description('生成文章封面图（900×500）')
+  .description('生成文章封面图（默认 16:9 · 1200×675）')
   .option('-o, --out <path>', '输出文件路径', 'cover.png')
   .option('--subtitle <text>', '副标题')
   .option('--style <name>', '风格: dark|light|gradient|brutalist', 'dark')
-  .option('--width <n>', '宽度', '900')
-  .option('--height <n>', '高度', '500')
+  .option('--aspect <ratio>', '画幅: 16:9(默认) | 4:3', '16:9')
+  .option('--width <n>', '宽度（覆盖画幅预设）')
+  .option('--height <n>', '高度（覆盖画幅预设）')
   .action(async (title, opts) => {
     const { generateCover } = require('../lib/generator');
     await generateCover({
       title,
       subtitle: opts.subtitle || '',
       style: opts.style,
-      width: parseInt(opts.width, 10),
-      height: parseInt(opts.height, 10),
+      aspect: opts.aspect,
+      width: opts.width ? parseInt(opts.width, 10) : undefined,
+      height: opts.height ? parseInt(opts.height, 10) : undefined,
       out: opts.out,
     });
   });
@@ -44,18 +46,20 @@ cmd
 // ── illustration ────────────────────────────────────────────────
 cmd
   .command('illustration <description>')
-  .description('根据描述生成文章配图（HTML 渲染 + 截图）')
+  .description('根据描述生成文章配图（默认 4:3 · 1200×900，HTML 渲染 + 截图）')
   .option('-o, --out <path>', '输出文件路径', 'illustration.png')
-  .option('--width <n>', '宽度', '900')
-  .option('--height <n>', '高度', '500')
+  .option('--aspect <ratio>', '画幅: 4:3(默认/信息图) | 16:9(氛围图)', '4:3')
+  .option('--width <n>', '宽度（覆盖画幅预设）')
+  .option('--height <n>', '高度（覆盖画幅预设）')
   .option('--style <name>', '风格', 'dark')
   .action(async (description, opts) => {
     const { generateIllustration } = require('../lib/generator');
     await generateIllustration({
       description,
       style: opts.style,
-      width: parseInt(opts.width, 10),
-      height: parseInt(opts.height, 10),
+      aspect: opts.aspect,
+      width: opts.width ? parseInt(opts.width, 10) : undefined,
+      height: opts.height ? parseInt(opts.height, 10) : undefined,
       out: opts.out,
     });
   });
@@ -101,6 +105,7 @@ cmd
   .description('矢量优先生成四类技术图：架构图 / 流程图 / 时序图 / 网络部署图（2x 高清，一次成图无需二次润色）')
   .option('-o, --out <path>', '输出 PNG 路径', 'diagram.png')
   .option('--theme <name>', '主题: light|dark', 'light')
+  .option('--aspect <ratio>', '画幅: 16:9(wide/氛围图) | 4:3(info/信息图) | auto(内容自适应)，默认按类型选', '4:3')
   .option('--scale <n>', '设备像素比（2 = 高清, 3 = 超清）', '2')
   .option('--svg-only', '只输出 SVG 矢量源文件')
   .option('--stdin', '从标准输入读取 spec（也可把 <spec> 传成 -）')
@@ -112,6 +117,7 @@ cmd
       spec,
       out: opts.out,
       theme: opts.theme,
+      aspect: opts.aspect,
       scale: parseInt(opts.scale, 10),
       svgOnly: opts.svgOnly,
     });

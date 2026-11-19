@@ -340,6 +340,36 @@ and refusal to emit bad images).
 
 ---
 
+## Article image sizing policy
+
+All article images use **landscape** ratios, chosen by content type:
+
+| Ratio | Logical size | Use for | Commands |
+| --- | --- | --- | --- |
+| **16:9** | 1200×675 | Wide scenes, product shots, atmosphere / cover images, single-row flows | `generate cover`, `generate diagram-v2 --aspect 16:9` |
+| **4:3** | 1200×900 | Information-dense figures that need detail: architecture, sequence, network deployment, data comparison, illustrations | `generate illustration`, `generate diagram-v2` (default for info types) |
+
+Rules:
+
+- The ratio is the **logical canvas**; actual PNG pixels = logical size × `--scale` (2× by default, 3× for extra sharpness).
+- `diagram-v2` picks the ratio by `type`: `flow` → 16:9 (wide scene); `architecture` / `sequence` / `deployment` → 4:3 (detail). Override with `--aspect 16:9|4:3`, or use `--aspect auto` for a content-tight canvas with no letterboxing.
+- Fitting never shrinks text: extra space is distributed into node / message spacing, and the diagram is re-laid-out at the target size. Headings pin to the top, legend / footnote to the bottom.
+- Code screenshots keep their natural height (they are not landscape figures).
+- Explicit `--width` / `--height` always override the preset.
+
+```bash
+node bin/cli.js generate cover "标题" --out cover.png              # 16:9 · 1200×675
+node bin/cli.js generate illustration "A → B → C" --out fig.png    # 4:3  · 1200×900
+node bin/cli.js generate diagram-v2 examples/flow.json --out f.png          # 16:9 (flow)
+node bin/cli.js generate diagram-v2 examples/architecture.json --out a.png  # 4:3  (architecture)
+node bin/cli.js generate diagram-v2 examples/flow.json --aspect 4:3 --out f43.png
+node bin/cli.js generate diagram-v2 examples/flow.json --aspect auto --out tight.png
+```
+
+Size policy lives in `src/lib/size.js` (`resolveSize`, `fitCanvas`, `DEFAULT_ASPECT`).
+
+---
+
 ## Vector-first diagrams (`diagram-v2`, recommended)
 
 The original Archify-style renderer measures CSS in the browser, then shrinks fonts

@@ -24,6 +24,8 @@
  */
 'use strict';
 
+const { aspectFor, normalizeAspect, fitCanvas } = require('./size');
+
 // ─── 设计令牌 ─────────────────────────────────────────────────
 const THEMES = {
   light: {
@@ -181,7 +183,7 @@ function layoutTiers(spec, cfg) {
   const cols = {};
   nodes.forEach(n => { (cols[n._col] = cols[n._col] || []).push(n); });
   const colKeys = Object.keys(cols).map(Number).sort((a, b) => a - b);
-  const gapX = cfg.gapX || 86, gapY = cfg.gapY || 26;
+  let gapX = cfg.gapX || 86, gapY = cfg.gapY || 26;
 
   const colW = {}, colH = {};
   colKeys.forEach(k => {
@@ -193,19 +195,53 @@ function layoutTiers(spec, cfg) {
   const colX = {};
   colKeys.forEach(k => { colX[k] = x; x += colW[k] + gapX; });
   const contentW = x - gapX + cfg.pad;
-  const W = Math.max(cfg.minW || 1080, Math.ceil(contentW));
+  let W = Math.max(cfg.minW || 1080, Math.ceil(contentW));
   const maxH = Math.max(...colKeys.map(k => colH[k]));
   const bodyTop = cfg.bodyTop;
-  colKeys.forEach(k => {
-    const startY = bodyTop + (maxH - colH[k]) / 2;
-    let y = startY;
-    cols[k].forEach(n => {
-      n.x = Math.round(colX[k] + (colW[k] - n.w) / 2);
-      n.y = Math.round(y);
-      y += n.h + gapY;
+  let H = bodyTop + maxH + cfg.footH;
+
+  // 目标画幅：把额外空间摊进列间距 / 节点纵向间距，而不是留大片空白。
+  // 只增大间距，绝不缩小节点或文字。
+  if (cfg.targetW && cfg.targetH && colKeys.length) {
+    const naturalBodyH = maxH;
+    const wantBodyH = Math.max(naturalBodyH, cfg.targetH - bodyTop - cfg.footH);
+    const extraH = wantBodyH - naturalBodyH;
+    if (extraH > 0 && colKeys.length > 1) {
+      const wantW = Math.max(W, cfg.targetW);
+      gapX += Math.max(0, (wantW - W) / (colKeys.length - 1));
+      W = wantW;
+      colKeys.forEach(k => {
+        const cnt = cols[k].length;
+        if (cnt > 1) colH[k] += extraH; // 该列的节点纵向铺开
+      });
+    }
+    x = cfg.pad;
+    colKeys.forEach(k => { colX[k] = x; x += colW[k] + gapX; });
+    W = Math.max(W, Math.ceil(x - gapX + cfg.pad));
+    H = bodyTop + Math.max(...colKeys.map(k => colH[k])) + cfg.footH;
+    colKeys.forEach(k => {
+      const cnt = cols[k].length;
+      const localGapY = cnt > 1 ? gapY + extraH / (cnt - 1) : gapY;
+      const stackH = cols[k].reduce((s, n) => s + n.h, 0) + localGapY * (cnt - 1);
+      const startY = bodyTop + (Math.max(...colKeys.map(key => colH[key])) - stackH) / 2;
+      let y = startY;
+      cols[k].forEach(n => {
+        n.x = Math.round(colX[k] + (colW[k] - n.w) / 2);
+        n.y = Math.round(y);
+        y += n.h + localGapY;
+      });
     });
-  });
-  const H = bodyTop + maxH + cfg.footH;
+  } else {
+    colKeys.forEach(k => {
+      const startY = bodyTop + (maxH - colH[k]) / 2;
+      let y = startY;
+      cols[k].forEach(n => {
+        n.x = Math.round(colX[k] + (colW[k] - n.w) / 2);
+        n.y = Math.round(y);
+        y += n.h + gapY;
+      });
+    });
+  }
   return { nodes, byId, edges, cols, colKeys, colX, colW, W, H, bodyTop };
 }
 
@@ -216,7 +252,7 @@ function layoutSequence(spec, cfg) {
   const n = parts.length;
   const partW = 168, minGap = 56;
   const contentW = n * partW + (n - 1) * minGap;
-  const W = Math.ceil(Math.max(cfg.minW || 1080, contentW + cfg.pad * 2));
+  let W = Math.ceil(Math.max(cfg.minW || 1080, contentW + cfg.pad * 2));
   const startX = (W - contentW) / 2;
   const yTop = cfg.bodyTop;
   const partH = 58;
@@ -225,11 +261,29 @@ function layoutSequence(spec, cfg) {
     p.y = yTop; p.w = partW; p.h = partH;
     p.cx = p.x + partW / 2;
   });
-  const rowH = 66;
-  const msgTop = yTop + partH + 46;
-  const lifeBottom = msgTop + msgs.length * rowH + 34;
-  msgs.forEach((m, i) => { m.y = msgTop + i * rowH + rowH / 2; });
-  const H = lifeBottom + cfg.footH - 20;
+  let rowH = 66;
+  let msgTop = yTop + partH + 46;
+  let lifeBottom = msgTop + msgs.length * rowH + 34;
+  let H = lifeBottom + cfg.footH - 20;
+
+  // 目标画幅：把剩余空间摊到消息行距与参与者列距，避免大片空白
+  if (cfg.targetW && cfg.targetH) {
+    W = Math.max(W, cfg.targetW);
+    const extraGap = n > 1 ? (W - cfg.pad * 2 - contentW) / (n - 1) : 0;
+    parts.forEach((p, i) => {
+      p.x = Math.round((W - (contentW + extraGap * (n - 1))) / 2 + i * (partW + minGap + extraGap));
+      p.cx = p.x + partW / 2;
+    });
+    const wantH = Math.max(H, cfg.targetH);
+    const extra = wantH - H;
+    if (msgs.length > 1) rowH += extra / msgs.length;
+    msgTop = yTop + partH + 46;
+    lifeBottom = msgTop + msgs.length * rowH + 34;
+    msgs.forEach((m, i) => { m.y = msgTop + i * rowH + rowH / 2; });
+    H = lifeBottom + cfg.footH - 20;
+  } else {
+    msgs.forEach((m, i) => { m.y = msgTop + i * rowH + rowH / 2; });
+  }
   return { parts, msgs, W, H, yTop, partH, lifeBottom, msgTop, rowH };
 }
 
@@ -440,14 +494,10 @@ function zoneSVG(z, nodes, t) {
   </g>`;
 }
 
-// ─── 主构建 ───────────────────────────────────────────────────
-function buildSVG(spec, opts = {}) {
-  const type = ['architecture', 'flow', 'sequence', 'deployment'].includes(spec.type) ? spec.type : 'architecture';
-  const theme = spec.theme === 'dark' ? 'dark' : 'light';
-  const t = THEMES[theme];
-  const cfg = { pad: 56, minW: opts.minW || 1080, bodyTop: spec.subtitle ? 172 : 142, footH: 74, gapX: 92, gapY: 28 };
-
-  let nodesForAudit = [], edgesForAudit = [], body = '';
+// 按给定 cfg 计算布局并生成正文 SVG；两阶段调用：先量自然尺寸，再按目标画幅铺开。
+function renderBody(spec, cfg, t, type) {
+  const theme = cfg.theme;
+  let body = '', bodyBottom = 0, usedKinds = [], audit;
 
   if (type === 'sequence') {
     const L = layoutSequence(spec, cfg);
@@ -456,7 +506,6 @@ function buildSVG(spec, opts = {}) {
     parts.forEach(p => {
       body += `<line x1="${p.cx}" y1="${p.y + p.h}" x2="${p.cx}" y2="${L.lifeBottom}" stroke="${t.borderStrong}" stroke-width="1.4" stroke-dasharray="5 6"/>`;
     });
-    // 参与者
     parts.forEach(p => {
       const kind = kindOf(p), meta = KIND[kind];
       body += `<g><rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" rx="11" fill="${t.card}" stroke="${borderOf(meta.color, t)}" stroke-width="1.5" filter="url(#shadow)"/>`
@@ -467,7 +516,6 @@ function buildSVG(spec, opts = {}) {
         + (p.sub ? `<text x="${p.x + 52}" y="${p.y + 43}" font-size="11" fill="${t.sub}">${esc(p.sub)}</text>` : '')
         + `</g>`;
     });
-    // 消息
     const idx = new Map(parts.map(p => [p.id, p]));
     msgs.forEach((m, i) => {
       const a = idx.get(m.from), b = idx.get(m.to);
@@ -475,24 +523,23 @@ function buildSVG(spec, opts = {}) {
       const self = a.id === b.id;
       const y = m.y;
       const isReturn = m.type === 'return' || m.type === 'dash';
-      const stroke = isReturn ? t.line : (m.type === 'async' ? t.lineStrong : t.lineStrong);
       const marker = isReturn ? 'url(#arrow-open)' : 'url(#arrow)';
       const dash = isReturn ? ' stroke-dasharray="6 5"' : '';
-      let path, lx, anchorX;
+      let path, anchorX;
       if (self) {
         const rx = a.cx + 74;
         path = `M${a.cx} ${y} H${rx - 16} C${rx + 14} ${y}, ${rx + 14} ${y + 34}, ${rx - 16} ${y + 34} H${a.cx + 8}`;
-        lx = a.cx + 74; anchorX = a.cx;
+        anchorX = a.cx;
       } else {
         const fwd = b.cx > a.cx;
         const x1 = a.cx + (fwd ? 6 : -6), x2 = b.cx - (fwd ? 10 : -10);
         path = `M${x1} ${y} H${x2}`;
-        lx = (x1 + x2) / 2; anchorX = lx;
+        anchorX = (x1 + x2) / 2;
       }
       body += `<g>
         <circle cx="26" cy="${y}" r="11" fill="${t.numberBg}" stroke="${t.border}"/>
         <text x="26" y="${y + 4}" font-size="10.5" font-weight="700" fill="${t.sub}" text-anchor="middle">${i + 1}</text>
-        <path d="${path}" fill="none" stroke="${stroke}" stroke-width="1.9"${dash} marker-end="${marker}"/>
+        <path d="${path}" fill="none" stroke="${t.lineStrong}" stroke-width="1.9"${dash} marker-end="${marker}"/>
       </g>`;
       if (m.label) {
         const fs = 12, lw = textW(m.label, fs) + 20;
@@ -500,22 +547,15 @@ function buildSVG(spec, opts = {}) {
           + `<text x="${anchorX}" y="${y - 10}" font-size="${fs}" font-weight="600" fill="${t.labelInk}" text-anchor="middle">${esc(m.label)}</text></g>`;
       }
     });
-    nodesForAudit = parts; edgesForAudit = msgs;
-    const usedKinds = [...new Set(parts.map(kindOf))];
-    // 坐标已是画布绝对坐标；header/footer 自行平移，body 不再平移
-    const innerW = W - cfg.pad * 2;
-    const svg = wrapSVG(W, H, t, defsSVG(W, H, t)
-      + `<g transform="translate(${cfg.pad},0)">${headerSVG(spec, innerW, t)}</g>`
-      + body
-      + `<g transform="translate(${cfg.pad},0)">${footerSVG(spec, innerW, H, t, usedKinds)}</g>`);
-    return { svg, width: W, height: H, type, audit: auditLayout([], [], W, H) };
+    bodyBottom = L.lifeBottom;
+    usedKinds = [...new Set(parts.map(kindOf))];
+    audit = auditLayout([], [], W, H);
+    var naturalWidth = W;
 
   } else {
     const isFlow = type === 'flow';
-    if (isFlow) cfg.gapX = 140; // 流程图边标签需要更长的连线空间
     const L = layoutTiers(spec, cfg);
-    const { nodes, byId, edges, cols, colKeys, W, H } = L;
-    // 泳道 / 区域（标题胶囊登记为标签避让障碍）
+    const { nodes, byId, edges, W, H } = L;
     const placed = [];
     placed.push({ l: 0, t: 0, r: W, b: cfg.bodyTop - 8 });
     placed.push({ l: 0, t: H - 42, r: W, b: H });
@@ -541,26 +581,66 @@ function buildSVG(spec, opts = {}) {
         }
       });
     }
-    // 节点
     nodes.forEach(n => {
       const shape = isFlow ? (n.shape || 'process') : (type === 'deployment' ? (n.shape || 'process') : 'card');
       body += nodeSVG(n, t, shape);
     });
-    // 连线（标签避让节点 / 泳道标题 / 页头页脚 / 彼此）
     edges.forEach((e, i) => {
       const a = byId.get(e.from), b = byId.get(e.to);
       if (a && b) body += edgeSVG(e, a, b, t, i, nodes, placed);
     });
-    nodesForAudit = nodes; edgesForAudit = edges;
-    const usedKinds = [...new Set(nodes.map(kindOf))];
-    // 坐标已是画布绝对坐标；header/footer 自行平移，body 不再平移
-    const innerW = W - cfg.pad * 2;
-    const svg = wrapSVG(W, H, t, defsSVG(W, H, t)
-      + `<g transform="translate(${cfg.pad},0)">${headerSVG(spec, innerW, t)}</g>`
-      + body
-      + `<g transform="translate(${cfg.pad},0)">${footerSVG(spec, innerW, H, t, usedKinds)}</g>`);
-    return { svg, width: W, height: H, type, audit: auditLayout(nodes, edges, W, H) };
+    bodyBottom = Math.max(...nodes.map(n => n.y + n.h)) + 18;
+    usedKinds = [...new Set(nodes.map(kindOf))];
+    audit = auditLayout(nodes, edges, W, H);
+    var naturalWidth = W;
   }
+  return { body, bodyBottom, usedKinds, audit, width: naturalWidth };
+}
+
+// ─── 主构建 ───────────────────────────────────────────────────
+function buildSVG(spec, opts = {}) {
+  const type = ['architecture', 'flow', 'sequence', 'deployment'].includes(spec.type) ? spec.type : 'architecture';
+  const theme = spec.theme === 'dark' ? 'dark' : 'light';
+  const t = THEMES[theme];
+  const baseCfg = { pad: 56, minW: opts.minW || 1080, bodyTop: spec.subtitle ? 172 : 142, footH: 74, gapX: 92, gapY: 28, theme };
+
+  const requested = opts.aspect !== undefined ? opts.aspect : spec.aspect;
+  const aspect = requested === 'auto' ? null
+    : (normalizeAspect(requested) || aspectFor(type));
+
+  // 第一遍：自然尺寸
+  const naturalCfg = { ...baseCfg };
+  if (type === 'flow') naturalCfg.gapX = 140;
+  const natural = renderBody(spec, naturalCfg, t, type);
+
+  // 目标画幅：只放大画布，节点/文字保持原尺寸
+  const fit = aspect
+    ? fitCanvas(natural.width, natural.bodyBottom, aspect)
+    : { width: natural.width, height: natural.bodyBottom, dx: 0, dy: 0 };
+  const CW = fit.width, CH = fit.height;
+
+  // 第二遍：按目标画幅重新铺开（增大间距，不缩放文字）
+  const finalCfg = { ...baseCfg, targetW: CW, targetH: CH };
+  if (type === 'flow') finalCfg.gapX = 140;
+  const final = renderBody(spec, finalCfg, t, type);
+
+  const headerH = spec.subtitle ? 142 : 112;
+  const stageTop = headerH + 16, stageBottom = CH - 46;
+  const bodyH = Math.max(1, final.bodyBottom - baseCfg.bodyTop);
+  const stageH = Math.max(bodyH, stageBottom - stageTop);
+  const dx = Math.round((CW - natural.width) / 2) || 0;
+  const dy = Math.round(stageTop + (stageH - bodyH) / 2 - baseCfg.bodyTop);
+  const innerW = CW - baseCfg.pad * 2;
+  const svg = wrapSVG(CW, CH, t, defsSVG(CW, CH, t)
+    + `<g transform="translate(${baseCfg.pad},0)">${headerSVG(spec, innerW, t)}</g>`
+    + `<g transform="translate(${dx},${dy})">${final.body}</g>`
+    + `<g transform="translate(${baseCfg.pad},0)">${footerSVG(spec, innerW, CH, t, final.usedKinds)}</g>`);
+
+  return {
+    svg, width: CW, height: CH, type,
+    aspect: aspect || 'auto',
+    audit: { ...final.audit, width: CW, height: CH },
+  };
 }
 
 function wrapSVG(W, H, t, content) {

@@ -414,15 +414,20 @@ function buildIllustrationHTML({ description, style, width, height }) {
 
 // ─── 公开 API ───────────────────────────────────────────────
 
-async function generateCover({ title, subtitle = '', style = 'dark', width = 900, height = 500, out = 'cover.png' }) {
+const { aspectFor, resolveSize } = require('./size');
+
+async function generateCover({ title, subtitle = '', style = 'dark', width, height, aspect, out = 'cover.png' }) {
   logger.spin('生成封面图...');
-  const html = buildCoverHTML({ title, subtitle, style, width, height });
-  await renderToFile(html, width, height, out);
-  logger.spinSucceed(`封面图已生成: ${out}`);
+  const size = resolveSize({ aspect, width, height, kind: 'cover' });
+  const html = buildCoverHTML({ title, subtitle, style, width: size.width, height: size.height });
+  await renderToFile(html, size.width, size.height, out);
+  logger.spinSucceed(`封面图已生成: ${out} (${size.aspect} · ${size.width}×${size.height})`);
+  return { out, ...size };
 }
 
-async function generateIllustration({ description, style = 'dark', width = 1200, height = 675, out = 'illustration.png' }) {
+async function generateIllustration({ description, style = 'dark', width, height, aspect, out = 'illustration.png' }) {
   logger.spin('生成配图...');
+  const size = resolveSize({ aspect, width, height, kind: 'illustration' });
   // 旧实现把 alt 文本原样写进一张居中卡片 —— 文章里那不是"图"。
   // 现在至少产出一张有节点、有连线、有图例的概念图。
   const parts = String(description)
@@ -448,7 +453,7 @@ async function generateIllustration({ description, style = 'dark', width = 1200,
       { from: 'a', to: 'c', label: '产出', primary: true },
     ],
   };
-  await generateDiagram({ spec, out, style, width, height, scale: 2 });
+  await generateDiagram({ spec, out, style, width: size.width, height: size.height, scale: 2, autoFit: false });
 }
 
 /**
@@ -514,14 +519,14 @@ async function generateDiagram({ spec, out = 'diagram.png', style, width = 1200,
  * renderV2 — 矢量优先的编辑级图表（新增，保留旧 generateDiagram 不动）。
  * spec 可传对象 / JSON 字符串 / .json 路径；同时输出 PNG + SVG 源文件。
  */
-async function renderV2({ spec, out = 'diagram.png', theme = 'light', scale = 2, svgOnly = false }) {
+async function renderV2({ spec, out = 'diagram.png', theme = 'light', aspect, scale = 2, svgOnly = false }) {
   const { buildSVG } = require('./diagram-v2');
   let raw = spec;
   if (typeof spec === 'string') {
     raw = spec.trim().startsWith('{') ? JSON.parse(spec) : JSON.parse(fs.readFileSync(spec, 'utf-8'));
   }
   if (theme) raw.theme = theme === 'dark' ? 'dark' : 'light';
-  const { svg, width, height, audit } = buildSVG(raw);
+  const { svg, width, height, audit, aspect: usedAspect } = buildSVG(raw, aspect ? { aspect } : {});
 
   const dir = path.dirname(out);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -541,8 +546,8 @@ async function renderV2({ spec, out = 'diagram.png', theme = 'light', scale = 2,
     await page.screenshot({ path: out, type: 'png' });
     await page.close();
   }
-  logger.spinSucceed(`图表已生成: ${svgOnly ? svgPath : out} (${width}×${height}${svgOnly ? '' : ` @${scale}x`}, 校验${audit.passed ? '通过' : '未通过'})`);
-  return { out: svgOnly ? svgPath : out, svgPath, width, height, audit };
+  logger.spinSucceed(`图表已生成: ${svgOnly ? svgPath : out} (${usedAspect} · ${width}×${height}${svgOnly ? '' : ` @${scale}x`}, 校验${audit.passed ? '通过' : '未通过'})`);
+  return { out: svgOnly ? svgPath : out, svgPath, width, height, aspect: usedAspect, audit };
 }
 
 async function generateCodeImage({ code, language = 'bash', filename = '', out = 'code.png', width = 780 }) {
