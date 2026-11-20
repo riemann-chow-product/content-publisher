@@ -210,7 +210,7 @@ test('校验：箭头使用固定像素标准三角，不与文字重叠', async
   for (const m of r.markers) {
     assert.equal(m.units, 'userSpaceOnUse');
     assert.equal(m.orient, 'auto');
-    assert.equal(m.refX, '11');
+    assert.equal(m.refX, '12');
     assert.equal(m.w, '12');
   }
   assert.equal(r.audit.checks.arrowClearance.ok, true, r.audit.checks.arrowClearance.detail);

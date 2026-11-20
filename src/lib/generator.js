@@ -427,7 +427,6 @@ async function generateCover({ title, subtitle = '', style = 'dark', width, heig
 
 async function generateIllustration({ description, style = 'dark', width, height, aspect, out = 'illustration.png' }) {
   logger.spin('生成配图...');
-  const size = resolveSize({ aspect, width, height, kind: 'illustration' });
   // 旧实现把 alt 文本原样写进一张居中卡片 —— 文章里那不是"图"。
   // 现在至少产出一张有节点、有连线、有图例的概念图。
   const parts = String(description)
@@ -453,7 +452,16 @@ async function generateIllustration({ description, style = 'dark', width, height
       { from: 'a', to: 'c', label: '产出', primary: true },
     ],
   };
-  await generateDiagram({ spec, out, style, width: size.width, height: size.height, scale: 2, autoFit: false });
+  // 配图高度按节点数量估算：少节点用扁画幅，多节点再变高，不再一律 4:3。
+  const nodeCount = Math.max(3, parts.length || 3);
+  const estimatedW = Math.min(1440, nodeCount * 218 + 40);
+  const estimatedH = nodeCount > 5 ? 320 : 240;
+  const size = resolveSize({
+    aspect, width, height, kind: 'illustration',
+    contentWidth: estimatedW, contentHeight: estimatedH,
+  });
+  await generateDiagram({ spec, out, style, width: size.width, height: size.height, scale: 2, autoFit: true });
+  logger.spinSucceed(`配图已生成: ${out} (${size.aspect} · ${size.width}×${size.height})`);
 }
 
 /**
@@ -526,7 +534,7 @@ async function renderV2({ spec, out = 'diagram.png', theme = 'light', aspect, sc
     raw = spec.trim().startsWith('{') ? JSON.parse(spec) : JSON.parse(fs.readFileSync(spec, 'utf-8'));
   }
   if (theme) raw.theme = theme === 'dark' ? 'dark' : 'light';
-  const { svg, width, height, audit, aspect: usedAspect } = buildSVG(raw, aspect ? { aspect } : {});
+  const { svg, width, height, audit, aspect: usedAspect, ratio } = buildSVG(raw, aspect ? { aspect } : {});
 
   const dir = path.dirname(out);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -546,8 +554,8 @@ async function renderV2({ spec, out = 'diagram.png', theme = 'light', aspect, sc
     await page.screenshot({ path: out, type: 'png' });
     await page.close();
   }
-  logger.spinSucceed(`图表已生成: ${svgOnly ? svgPath : out} (${usedAspect} · ${width}×${height}${svgOnly ? '' : ` @${scale}x`}, 校验${audit.passed ? '通过' : '未通过'})`);
-  return { out: svgOnly ? svgPath : out, svgPath, width, height, aspect: usedAspect, audit };
+  logger.spinSucceed(`图表已生成: ${svgOnly ? svgPath : out} (${usedAspect}${ratio ? ` ≈${Number(ratio).toFixed(2)}:1` : ''} · ${width}×${height}${svgOnly ? '' : ` @${scale}x`}, 校验${audit.passed && audit.arrowDirection.ok ? '通过' : '未通过'})`);
+  return { out: svgOnly ? svgPath : out, svgPath, width, height, aspect: usedAspect, ratio, audit };
 }
 
 async function generateCodeImage({ code, language = 'bash', filename = '', out = 'code.png', width = 780 }) {
@@ -641,8 +649,6 @@ async function generateArticleImages({ file, outDir = '.', style = 'dark', keepB
       await generateIllustration({
         description: img.alt,
         style,
-        width: 1200,
-        height: 675,
         out: img.path,
       });
       logger.info(`  ✅ ${img.file} (Archify 风格概念图, 2x)`);

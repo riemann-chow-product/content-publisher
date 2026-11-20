@@ -371,19 +371,20 @@ function buildDiagramHTML(spec, opts = {}) {
       var sameColumn = Math.abs(acx-bcx) < (ar.width+br.width)*0.3;
       var vertical = sameColumn && Math.abs(br.top-ar.top) > 8;
       var x1,y1,x2,y2,cx1,cy1,cx2,cy2;
+      var goLeft = bcx < acx; // 目标在源节点左侧：必须从源左缘出发、到目标右缘结束
       if (vertical) {
         x1=acx-sb.left; y1=ar.bottom-sb.top+2;
         x2=bcx-sb.left; y2=br.top-sb.top-arrowGap;
         var dy=Math.max(4,Math.min(Math.abs(y2-y1)*0.42,48));
         cx1=x1; cy1=y1+dy; cx2=x2; cy2=y2-dy;
       } else {
-        x1=ar.right-sb.left+2; y1=ar.top+ar.height/2-sb.top;
-        x2=br.left-sb.left-arrowGap; y2=br.top+br.height/2-sb.top;
+        x1=(goLeft?ar.left:ar.right)-sb.left+(goLeft?-2:2); y1=ar.top+ar.height/2-sb.top;
+        x2=(goLeft?br.right:br.left)-sb.left+(goLeft?arrowGap:-arrowGap); y2=br.top+br.height/2-sb.top;
         // 控制点必须随线长收敛，短边上强制 12px 会造成 cx1 > cx2 的回环
         var dx=Math.max(4,Math.min(Math.abs(x2-x1)*0.42,48));
-        cx1=x1+dx; cy1=y1; cx2=x2-dx; cy2=y2;
+        cx1=x1+(goLeft?-dx:dx); cy1=y1; cx2=x2+(goLeft?dx:-dx); cy2=y2;
       }
-      items.push({ e:e, x1:x1,y1:y1,x2:x2,y2:y2,cx1:cx1,cy1:cy1,cx2:cx2,cy2:cy2,
+      items.push({ e:e, from:e.from, to:e.to, x1:x1,y1:y1,x2:x2,y2:y2,cx1:cx1,cy1:cy1,cx2:cx2,cy2:cy2,
         d:'M '+x1+' '+y1+' C '+cx1+' '+cy1+', '+cx2+' '+cy2+', '+x2+' '+y2,
         len:Math.abs(x2-x1)+Math.abs(y2-y1),
         arrowBox:{ left:x2-6, top:y2-6, right:x2+6, bottom:y2+6 } });
@@ -479,9 +480,10 @@ function buildDiagramHTML(spec, opts = {}) {
       // Chromium 会连 marker-end 一起裁掉 —— 所以滤镜只给独立的发光底线用。
       '<filter id="glow" filterUnits="userSpaceOnUse" x="-2000" y="-2000" width="6000" height="6000">' +
         '<feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>' +
-      '<marker id="arrow" viewBox="0 0 12 10" refX="11" refY="5" markerWidth="12" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto">' +
+      // 箭头只在终点：marker-end + orient=auto，尖端 (12,5) 由 refX=12 对齐到路径终点。
+      '<marker id="arrow" viewBox="0 0 12 10" refX="12" refY="5" markerWidth="12" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto">' +
         '<path d="M 0 0 L 12 5 L 0 10 L 3 5 z" fill="${arrowColor}"/></marker>' +
-      '<marker id="arrow-primary" viewBox="0 0 12 10" refX="11" refY="5" markerWidth="12" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto">' +
+      '<marker id="arrow-primary" viewBox="0 0 12 10" refX="12" refY="5" markerWidth="12" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto">' +
         '<path d="M 0 0 L 12 5 L 0 10 L 3 5 z" fill="#a371f7"/></marker>';
     return d;
   }
@@ -598,6 +600,25 @@ function buildDiagramHTML(spec, opts = {}) {
              missing:missing, filtered:filtered, badRef:badRef };
   }
 
+  // 方向校验：箭头（marker-end）必须贴着目标节点，绝不能落在起点一侧。
+  function arrowDirectionAudit() {
+    var bad=0, self=0;
+    geo.items.forEach(function(g){
+      if (g.from === g.to) { self++; return; }
+      var target=document.querySelector('[data-node="'+g.to+'"]');
+      if (!target) { bad++; return; }
+      var r=target.getBoundingClientRect();
+      var left=r.left-geo.sb.left, right=r.right-geo.sb.left;
+      var top=r.top-geo.sb.top, bottom=r.bottom-geo.sb.top;
+      var d=Math.min(
+        Math.abs(g.x2-left), Math.abs(g.x2-right),
+        Math.abs(g.y2-top), Math.abs(g.y2-bottom)
+      );
+      if (d > arrowGap+8) bad++;
+    });
+    return { ok:bad===0, detail:bad+' arrows not at target end ('+self+' self messages skipped)' };
+  }
+
   // 距离校验：箭头 ↔ 所有文字；标签 ↔ 所有箭头
   function arrowTextAudit() {
     // 泳道标题、标题/副标题、图例、脚注、节点文字、连线标签，一个都不能被箭头压住
@@ -638,9 +659,11 @@ function buildDiagramHTML(spec, opts = {}) {
   var la=labelArrowAudit();
   var lt=labelTextAudit();
   var ar=arrowRenderAudit();
+  var ad=arrowDirectionAudit();
 
   checks.arrowRendered = { ok:ar.count===ar.expected && ar.missing===0 && ar.filtered===0 && ar.badRef===0,
     detail:ar.count+'/'+ar.expected+' arrow paths ('+ar.inDom+' markers in DOM), '+ar.missing+' missing marker, '+ar.filtered+' filtered, '+ar.badRef+' bad ref' };
+  checks.arrowAtTarget = ad;
   checks.labelOverlap = { ok:lr.unplaced===0, detail:lr.unplaced+' unplaced, '+lr.hits.label+' label-label hits' };
   checks.labelNodeClearance = { ok:lr.unplaced===0, detail:lr.unplaced+' unplaced, '+lr.hits.node+' label-node hits' };
   checks.labelTextClearance = { ok:lt.bad===0 && lr.unplaced===0,

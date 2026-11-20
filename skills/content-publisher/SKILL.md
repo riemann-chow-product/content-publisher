@@ -150,6 +150,20 @@ content-publisher publish article.md \
 - `图片上传失败`：检查图片格式（JPG/PNG/GIF/WebP）和大小（微信 ≤ 2MB）
 - `access_token 过期`：重新运行 `account setup` 刷新凭证
 
+## 配图 / 图表生成规范（生图必读）
+
+调用 `content-publisher generate illustration|diagram|diagram-v2` 或手工编写 diagram spec 时：
+
+1. **箭头只在终点**：每条连线用 `from → to` 表达方向，箭头必须落在 `to`（目标节点）一侧；
+   禁止在起点画箭头，也不要把反向消息画成从目标指回源的箭头。
+   反向 / 返回消息写 `{ "from": "db", "to": "b", "type": "return" }` 即可，渲染器会自动把
+   箭头放在 `b` 的边缘。`diagram-v2` 的 `audit.arrowDirection` 必须为真。
+2. **画幅按信息密度自适应**：默认用 `--aspect auto`，不要一律 4:3。
+   信息少（节点 ≤ 4）用扁画幅，信息多再用高画幅；只有用户明确要求时才固定
+   `--aspect 16:9|3:2|4:3`。封面固定 16:9，代码截图按内容高度。
+3. **不产出坏图**：任何校验不通过（节点重叠、文字截断、箭头不在目标端）都要重新排布 spec，
+   不要直接交付截图。
+
 ## 配置参考
 
 详见 `references/config.md`。

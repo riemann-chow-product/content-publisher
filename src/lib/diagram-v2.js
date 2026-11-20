@@ -24,7 +24,7 @@
  */
 'use strict';
 
-const { aspectFor, normalizeAspect, fitCanvas } = require('./size');
+const { fitCanvas, fitDenseCanvas, normalizeAspect } = require('./size');
 
 // ─── 设计令牌 ─────────────────────────────────────────────────
 const THEMES = {
@@ -302,11 +302,14 @@ function defsSVG(W, H, t) {
     <filter id="glow" x="-2000" y="-2000" width="6000" height="6000">
       <feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>
-    <marker id="arrow" viewBox="0 0 12 10" refX="10.5" refY="5" markerWidth="11" markerHeight="9"
+    <!-- 箭头只允许出现在连线的终点（目标节点侧）：marker-end + orient=auto。
+         marker 的尖端在 viewBox x=12，refX=12 使尖端精确落在路径终点；
+         绝不使用 marker-start / marker-mid，避免箭头跑到起点。 -->
+    <marker id="arrow" viewBox="0 0 12 10" refX="12" refY="5" markerWidth="11" markerHeight="9"
       markerUnits="userSpaceOnUse" orient="auto"><path d="M0 0 12 5 0 10 3 5z" fill="${t.lineStrong}"/></marker>
-    <marker id="arrow-p" viewBox="0 0 12 10" refX="10.5" refY="5" markerWidth="11" markerHeight="9"
+    <marker id="arrow-p" viewBox="0 0 12 10" refX="12" refY="5" markerWidth="11" markerHeight="9"
       markerUnits="userSpaceOnUse" orient="auto"><path d="M0 0 12 5 0 10 3 5z" fill="#6938EF"/></marker>
-    <marker id="arrow-open" viewBox="0 0 12 10" refX="10.5" refY="5" markerWidth="11" markerHeight="9"
+    <marker id="arrow-open" viewBox="0 0 12 10" refX="11" refY="5" markerWidth="11" markerHeight="9"
       markerUnits="userSpaceOnUse" orient="auto"><path d="M1 1 11 5 1 9" fill="none" stroke="${t.lineStrong}" stroke-width="1.8"/></marker>
   </defs>`;
 }
@@ -525,16 +528,21 @@ function renderBody(spec, cfg, t, type) {
       const isReturn = m.type === 'return' || m.type === 'dash';
       const marker = isReturn ? 'url(#arrow-open)' : 'url(#arrow)';
       const dash = isReturn ? ' stroke-dasharray="6 5"' : '';
-      let path, anchorX;
+      let path, anchorX, startX, endX;
+      const gap = 8;
       if (self) {
-        const rx = a.cx + 74;
-        path = `M${a.cx} ${y} H${rx - 16} C${rx + 14} ${y}, ${rx + 14} ${y + 34}, ${rx - 16} ${y + 34} H${a.cx + 8}`;
-        anchorX = a.cx;
+        // 自消息也走「右侧出发 → 右侧回到自己」，箭头落在终点而不是起点。
+        const rx = a.x + a.w + 74;
+        startX = a.x + a.w + 4;
+        endX = a.x + a.w + 10;
+        path = `M${startX} ${y} H${rx - 16} C${rx + 14} ${y}, ${rx + 14} ${y + 34}, ${rx - 16} ${y + 34} H${endX}`;
+        anchorX = rx - 4;
       } else {
         const fwd = b.cx > a.cx;
-        const x1 = a.cx + (fwd ? 6 : -6), x2 = b.cx - (fwd ? 10 : -10);
-        path = `M${x1} ${y} H${x2}`;
-        anchorX = (x1 + x2) / 2;
+        startX = fwd ? a.x + a.w + 4 : a.x - 4;
+        endX = fwd ? b.x - gap : b.x + b.w + gap;
+        path = `M${startX} ${y} H${endX}`;
+        anchorX = (startX + endX) / 2;
       }
       body += `<g>
         <circle cx="26" cy="${y}" r="11" fill="${t.numberBg}" stroke="${t.border}"/>
@@ -551,6 +559,13 @@ function renderBody(spec, cfg, t, type) {
     usedKinds = [...new Set(parts.map(kindOf))];
     audit = auditLayout([], [], W, H);
     var naturalWidth = W;
+    // 内容包围盒（不含页眉/页脚），用于按真实信息密度选画幅。
+    var contentBox = parts.length ? {
+      minX: Math.min(...parts.map(p => p.x)) - 30,
+      maxX: Math.max(...parts.map(p => p.x + p.w)) + 30,
+      minY: L.yTop - 12,
+      maxY: L.lifeBottom + 10,
+    } : null;
 
   } else {
     const isFlow = type === 'flow';
@@ -593,8 +608,15 @@ function renderBody(spec, cfg, t, type) {
     usedKinds = [...new Set(nodes.map(kindOf))];
     audit = auditLayout(nodes, edges, W, H);
     var naturalWidth = W;
+    // 包含泳道 / 区域边框的留白，避免第二遍平移后边框被裁。
+    var contentBox = nodes.length ? {
+      minX: Math.min(...nodes.map(n => n.x)) - 34,
+      maxX: Math.max(...nodes.map(n => n.x + n.w)) + 34,
+      minY: Math.min(...nodes.map(n => n.y)) - 44,
+      maxY: Math.max(...nodes.map(n => n.y + n.h)) + 30,
+    } : null;
   }
-  return { body, bodyBottom, usedKinds, audit, width: naturalWidth };
+  return { body, bodyBottom, usedKinds, audit, width: naturalWidth, contentBox };
 }
 
 // ─── 主构建 ───────────────────────────────────────────────────
@@ -604,19 +626,36 @@ function buildSVG(spec, opts = {}) {
   const t = THEMES[theme];
   const baseCfg = { pad: 56, minW: opts.minW || 1080, bodyTop: spec.subtitle ? 172 : 142, footH: 74, gapX: 92, gapY: 28, theme };
 
+  // 默认按信息密度自适应画幅；显式 16:9 / 3:2 / 4:3 仍可强制指定。
   const requested = opts.aspect !== undefined ? opts.aspect : spec.aspect;
-  const aspect = requested === 'auto' ? null
-    : (normalizeAspect(requested) || aspectFor(type));
+  const mode = normalizeAspect(requested) || 'auto';
 
   // 第一遍：自然尺寸
   const naturalCfg = { ...baseCfg };
   if (type === 'flow') naturalCfg.gapX = 140;
   const natural = renderBody(spec, naturalCfg, t, type);
 
-  // 目标画幅：只放大画布，节点/文字保持原尺寸
-  const fit = aspect
-    ? fitCanvas(natural.width, natural.bodyBottom, aspect)
-    : { width: natural.width, height: natural.bodyBottom, dx: 0, dy: 0 };
+  // 用真实内容包围盒（而非含页眉的绝对 y）量画幅，信息少时才能真正收紧。
+  const headerH = spec.subtitle ? 142 : 112;
+  const footH = baseCfg.footH;
+  const box = natural.contentBox || { minX: 0, maxX: natural.width, minY: 0, maxY: natural.bodyBottom };
+  const contentW = Math.max(1, box.maxX - box.minX);
+  const contentH = Math.max(1, box.maxY - box.minY);
+  const logicalH = contentH + headerH + 24 + footH;
+
+  // 目标画幅：只放大画布，节点/文字保持原尺寸。
+  // auto = 按内容密度选紧凑画幅；tight = 完全贴合内容；其余为固定比例。
+  let fit;
+  if (mode === 'tight') {
+    fit = fitDenseCanvas(contentW, logicalH, {
+      padX: 0, padY: 0, minWidth: 360, minHeight: 240, maxWidth: 2400, maxHeight: 1800,
+    });
+    fit.aspect = 'tight';
+  } else if (mode === 'auto') {
+    fit = fitDenseCanvas(contentW, logicalH, { padX: 112, padY: 0 });
+  } else {
+    fit = fitCanvas(contentW, logicalH, mode);
+  }
   const CW = fit.width, CH = fit.height;
 
   // 第二遍：按目标画幅重新铺开（增大间距，不缩放文字）
@@ -624,11 +663,12 @@ function buildSVG(spec, opts = {}) {
   if (type === 'flow') finalCfg.gapX = 140;
   const final = renderBody(spec, finalCfg, t, type);
 
-  const headerH = spec.subtitle ? 142 : 112;
   const stageTop = headerH + 16, stageBottom = CH - 46;
   const bodyH = Math.max(1, final.bodyBottom - baseCfg.bodyTop);
   const stageH = Math.max(bodyH, stageBottom - stageTop);
-  const dx = Math.round((CW - natural.width) / 2) || 0;
+  // 第二遍布局已经按 CW 铺开；只有在内容比画布窄时才居中，
+  // 否则向左平移会吃掉右侧留白并裁掉泳道 / 区域边框。
+  const dx = final.width >= CW ? 0 : Math.round((CW - final.width) / 2);
   const dy = Math.round(stageTop + (stageH - bodyH) / 2 - baseCfg.bodyTop);
   const innerW = CW - baseCfg.pad * 2;
   const svg = wrapSVG(CW, CH, t, defsSVG(CW, CH, t)
@@ -636,10 +676,21 @@ function buildSVG(spec, opts = {}) {
     + `<g transform="translate(${dx},${dy})">${final.body}</g>`
     + `<g transform="translate(${baseCfg.pad},0)">${footerSVG(spec, innerW, CH, t, final.usedKinds)}</g>`);
 
+  // 箭头方向不变量：每条连线只能有 marker-end（目标端），绝不能有 marker-start。
+  const expectedArrows = type === 'sequence'
+    ? (spec.messages || spec.edges || []).length
+    : (spec.edges || []).length;
+  const renderedArrows = (final.body.match(/marker-end="/g) || []).length;
+  const startArrows = /marker-start\s*=/.test(final.body) || /marker-start\s*=/.test(defsSVG(CW, CH, t));
+  const arrowDirection = {
+    ok: !startArrows && renderedArrows === expectedArrows,
+    detail: `${renderedArrows}/${expectedArrows} arrows at target end, ${startArrows ? 'marker-start found' : 'no marker-start'}`,
+  };
+
   return {
     svg, width: CW, height: CH, type,
-    aspect: aspect || 'auto',
-    audit: { ...final.audit, width: CW, height: CH },
+    aspect: fit.aspect || 'auto', ratio: fit.ratio,
+    audit: { ...final.audit, width: CW, height: CH, contentWidth: final.width, arrowDirection },
   };
 }
 

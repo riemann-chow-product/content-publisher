@@ -301,3 +301,15 @@ content-publisher generate diagram spec.json --out fig.png --audit-json
 
 `--no-auto-fit` 可关闭画布高度自适应。回归测试见 `test/diagram.test.js`（含压力布局、
 箭头距离、像素级箭头 / 横线渲染、坏图拒绝产出等用例）。
+
+## 配图画幅与箭头方向
+
+默认不再把所有图塞进 4:3：`generate illustration` / `generate diagram-v2` 会先量内容占比，
+再按信息密度选紧凑横图（信息少 → 更扁，信息多 → 更高），避免右侧或下方大片留白。
+需要固定比例时用 `--aspect 16:9 | 3:2 | 4:3`；`--aspect tight` 让画布完全贴合内容。
+封面图仍固定 16:9，代码截图按内容高度。尺寸逻辑在 `src/lib/size.js`。
+
+箭头统一只在**终点（目标节点侧）**：两套渲染器都只用 `marker-end` + `orient="auto"`，
+绝不使用 `marker-start`。反向 / 返回消息会从源节点边缘画到目标节点边缘，
+箭头落在目标上。`diagram-v2` 通过 `audit.arrowDirection` 暴露该校验，
+旧渲染器在 `arrowAtTarget` 不通过时直接拒绝出图。

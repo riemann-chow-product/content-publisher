@@ -46,9 +46,9 @@ cmd
 // ── illustration ────────────────────────────────────────────────
 cmd
   .command('illustration <description>')
-  .description('根据描述生成文章配图（默认 4:3 · 1200×900，HTML 渲染 + 截图）')
+  .description('根据描述生成文章配图（按信息密度自适应画幅，HTML 渲染 + 截图）')
   .option('-o, --out <path>', '输出文件路径', 'illustration.png')
-  .option('--aspect <ratio>', '画幅: 4:3(默认/信息图) | 16:9(氛围图)', '4:3')
+  .option('--aspect <ratio>', '画幅: auto(按信息密度自适应,默认) | 16:9 | 3:2 | 4:3', 'auto')
   .option('--width <n>', '宽度（覆盖画幅预设）')
   .option('--height <n>', '高度（覆盖画幅预设）')
   .option('--style <name>', '风格', 'dark')
@@ -105,7 +105,7 @@ cmd
   .description('矢量优先生成四类技术图：架构图 / 流程图 / 时序图 / 网络部署图（2x 高清，一次成图无需二次润色）')
   .option('-o, --out <path>', '输出 PNG 路径', 'diagram.png')
   .option('--theme <name>', '主题: light|dark', 'light')
-  .option('--aspect <ratio>', '画幅: 16:9(wide/氛围图) | 4:3(info/信息图) | auto(内容自适应)，默认按类型选', '4:3')
+  .option('--aspect <ratio>', '画幅: auto(按信息密度自适应,默认) | tight(贴合内容) | 16:9 | 3:2 | 4:3', 'auto')
   .option('--scale <n>', '设备像素比（2 = 高清, 3 = 超清）', '2')
   .option('--svg-only', '只输出 SVG 矢量源文件')
   .option('--stdin', '从标准输入读取 spec（也可把 <spec> 传成 -）')
