@@ -223,6 +223,8 @@ function parseTableBlock(lines, start) {
   html += `</tr></thead><tbody>`;
   for (let r = 1; r < dataRows.length; r++) {
     const cells = dataRows[r].split('|').map(c => c.trim()).filter(Boolean);
+    // 末尾只剩一个 "|" 之类的空行不应渲染成空白 <tr></tr>
+    if (cells.length === 0) continue;
     html += `<tr>`;
     for (const cell of cells) {
       html += `<td>${applyInlineStyles(cell)}</td>`;
