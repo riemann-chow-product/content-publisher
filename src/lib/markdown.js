@@ -371,6 +371,55 @@ function renderForPlatform(md, platform) {
 }
 
 /**
+ * 把 Markdown 解析出的 <table> 转成纯 <section> 卡片布局。
+ * 微信编辑器会把原生 <table> 替换成自带表格组件，自动在末尾补一行空白行，
+ * 并可能把单元格内文字拆行；section + inline-block 可被微信原样保留。
+ */
+function tableToSections(tableHtml) {
+  const headRows = [...tableHtml.matchAll(/<thead>([\s\S]*?)<\/thead>/g)];
+  const bodyRows = [...tableHtml.matchAll(/<tbody>([\s\S]*?)<\/tbody>/g)];
+  const cellsOf = (rowHtml) => [...rowHtml.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/g)]
+    .map(m => m[1].replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').trim());
+  const headers = headRows.length ? cellsOf(headRows[0][1]) : [];
+  const rows = bodyRows.length ? [...bodyRows[0][1].matchAll(/<tr>([\s\S]*?)<\/tr>/g)].map(m => cellsOf(m[1])) : [];
+  if (!headers.length && !rows.length) return tableHtml;
+
+  const colCount = Math.max(headers.length, ...rows.map(r => r.length), 1);
+  const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  // 生成单个单元格：列之间用 padding + 竖线分隔，box-sizing 保证不溢出
+  const cell = (text, i, total, isHeader) => {
+    const w = total === 2
+      ? (i === 0 ? '33%' : '67%')
+      : (i === 0 ? '25%' : `${Math.floor(75 / Math.max(1, total - 1))}%`);
+    const padRight = i < total - 1 ? 'padding-right:14px;' : '';
+    const padLeft = i > 0 ? 'padding-left:14px;' : '';
+    const divider = i > 0
+      ? (isHeader ? 'border-left:1px solid rgba(255,255,255,0.32);' : 'border-left:1px solid #d5e3f0;')
+      : '';
+    const weight = i === 0 || isHeader ? 'font-weight:bold;' : '';
+    // 垂直 padding 放在单元格内部，让 border-left 从行顶贯穿到行底、行间不中断
+    const vpad = isHeader ? 'padding-top:10px;padding-bottom:10px;' : 'padding-top:9px;padding-bottom:9px;';
+    return `<span style="display:inline-block;width:${w};vertical-align:top;box-sizing:border-box;${vpad}${padRight}${padLeft}${divider}${weight}">${esc(text)}</span>`;
+  };
+
+  let out = '<section style="margin:18px 0;background:#fafbfc;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;font-size:13px;line-height:1.8;color:#333;">';
+  if (headers.length) {
+    out += '<section style="background:linear-gradient(135deg,#0077b6,#00b4d8);padding:0 12px;color:#fff;font-weight:bold;">';
+    headers.forEach((h, i) => { out += cell(h, i, headers.length, true); });
+    out += '</section>';
+  }
+  rows.forEach((r, ri) => {
+    const bg = ri % 2 ? 'background:#f4f9fd;' : '';
+    out += `<section style="${bg}border-top:1px solid #e8eef5;padding:0 12px;">`;
+    r.forEach((c, i) => { out += cell(c, i, r.length, false); });
+    out += '</section>';
+  });
+  out += '</section>';
+  return out;
+}
+
+/**
  * 微信公众号精品样式渲染
  * 样式：标题左侧色块 + 交错表格 + 醒目引用 + 深色代码
  */
@@ -394,7 +443,10 @@ function renderForWechat(parsed) {
   // ---- 3. 代码块 ----
   // 已在第一步直接渲染（renderCodeBlock），此处无需再处理
 
-  // ---- 4. 表格（自适应宽度，无横向滚动） ----
+  // ---- 4. 表格 ----
+  // 微信编辑器会把 <table> 转成自带表格组件，并在末尾注入一行空白行（横跨所有列），
+  // 且把单元格内容拆成上下两行。改用纯 <section> + inline-block 布局，微信原样保留。
+  html = html.replace(/(<table[\s\S]*?<\/table>)/g, (_, tableHtml) => tableToSections(tableHtml));
   html = html.replace(/(<table[\s\S]*?<\/table>)/g,
     '<section style="width:100%;max-width:100%;margin:18px 0;background:#fafbfc;border-radius:8px;overflow:hidden;border:1px solid #e2e8f0;">$1</section>');
   html = html.replace(/<table>/g,
