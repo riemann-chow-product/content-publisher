@@ -371,6 +371,27 @@ function renderForPlatform(md, platform) {
 }
 
 /**
+ * 把 Markdown 解析出的 <ol> 转成带显式编号的 <section> 卡片布局。
+ * 微信编辑器会剥离 <ol> 的语义，导致每个 <li> 都从 1 开始编号；
+ * 把编号直接写进 section 内容，不依赖微信对 <ol> 的自动编号。
+ */
+function orderedListToSections(olHtml) {
+  const items = [...olHtml.matchAll(/<li[^>]*>([\s\S]*?)<\/li>/g)].map(m => m[1]);
+  if (!items.length) return olHtml;
+
+  let out = '<section style="margin:12px 0;">';
+  items.forEach((item, idx) => {
+    const num = idx + 1;
+    out += '<section style="margin:8px 0;line-height:1.9;font-size:15px;color:#444;">';
+    out += `<span style="display:inline-block;min-width:22px;height:22px;line-height:22px;text-align:center;margin-right:10px;background:linear-gradient(135deg,#0077b6,#00b4d8);color:#fff;border-radius:50%;font-size:12px;font-weight:bold;vertical-align:middle;">${num}</span>`;
+    out += `<span style="display:inline-block;width:calc(100% - 34px);vertical-align:top;">${item}</span>`;
+    out += '</section>';
+  });
+  out += '</section>';
+  return out;
+}
+
+/**
  * 把 Markdown 解析出的 <table> 转成纯 <section> 卡片布局。
  * 微信编辑器会把原生 <table> 替换成自带表格组件，自动在末尾补一行空白行，
  * 并可能把单元格内文字拆行；section + inline-block 可被微信原样保留。
@@ -426,6 +447,11 @@ function tableToSections(tableHtml) {
 function renderForWechat(parsed) {
   let html = parsed.html;
 
+  // ---- 0. 微信渲染缺陷规避 ----
+  // 微信编辑器会把紧跟 <strong> 的中文冒号挤到下一行行首，
+  // 把冒号并入粗体内可让「**标签**：内容」保持在同一行。
+  html = html.replace(/(<strong>[^<]*?)<\/strong>(：)/g, '$1$2</strong>');
+
   // ---- 1. 标题样式 ----
   html = html.replace(/<h1>(.+?)<\/h1>/g,
     (_, t) => `<h1 style="font-weight:bold;margin:32px 0 20px;font-size:24px;text-align:center;padding:18px 24px;background:linear-gradient(135deg,#1a1a2e 0%,#16213e 100%);color:#fff;border-radius:10px;line-height:1.6;letter-spacing:0.5px;">${t}</h1>`);
@@ -465,10 +491,11 @@ function renderForWechat(parsed) {
     `<p style="margin:12px 0;line-height:2.1;font-size:15px;color:#333;">`);
 
   // ---- 7. 列表 ----
+  // 有序列表：微信编辑器会剥离 <ol> 语义导致所有项都从 1 开始编号，
+  // 转成带显式编号的 section 卡片（与表格 section 化同理）。
+  html = html.replace(/<ol>[\s\S]*?<\/ol>/g, (m) => orderedListToSections(m));
   html = html.replace(/<ul>/g,
     `<ul style="margin:12px 0;padding-left:22px;">`);
-  html = html.replace(/<ol>/g,
-    `<ol style="margin:12px 0;padding-left:22px;">`);
   html = html.replace(/<li>/g,
     `<li style="margin:5px 0;line-height:2;font-size:15px;color:#444;">`);
 
